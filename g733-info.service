@@ -1,0 +1,10 @@
+[Unit]
+Description=G733 Info
+
+[Service]
+ExecStart=/usr/local/bin/g733_info
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
