@@ -1,0 +1,96 @@
+#!/bin/python3
+
+import logging
+import time
+from subprocess import check_output, CalledProcessError
+
+STATE_NORMAL = 0
+STATE_CHARGING = 1
+STATE_DISCONNECTED = 2
+STATE_WARNING = 3
+STATE_EMPTY = 4
+STATE_INVALID = -1
+
+THRESHOLD_WARNING = 25
+THRESHOLD_EMPTY = 10
+INTERVAL = 2
+
+APP_NAME = "G733 Info"
+LEVEL_LOW = "low"
+LEVEL_NORMAL = "normal"
+LEVEL_CRITICAL = "critical"
+
+
+def send_push(level: str, title: str, message: str):
+    try:
+        check_output(["notify-send", "-u", level, "-a", APP_NAME, title, message])
+    except CalledProcessError:
+        logging.error("Unable to send push")
+
+
+def main():
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s [%(levelname)s] %(message)s")
+
+    logging.info("Starting g733_info")
+    logging.info(f"Current config: interval is {INTERVAL}, threshold warning is {THRESHOLD_WARNING}%, "
+                 f"threshold empty is {THRESHOLD_EMPTY}%")
+
+    current_state = STATE_INVALID
+
+    while True:
+        time.sleep(INTERVAL)
+        logging.debug("Gathering info from `headsetcontrol`")
+
+        try:
+            hsc_out = check_output(["headsetcontrol", "-c", "-b"])
+            battery_level = int(hsc_out)
+        except CalledProcessError:
+            if current_state is not STATE_DISCONNECTED:
+                logging.info(f"Changing state from {current_state} to DISCONNECTED ({STATE_DISCONNECTED})")
+                current_state = STATE_DISCONNECTED
+                send_push(LEVEL_NORMAL, "Наушники отключены", "Наушники были отключены или произошло что-то плохое...")
+
+            continue
+
+        if current_state is STATE_DISCONNECTED and battery_level != -1:
+            logging.info(f"Headset is connected! Notifying a user")
+            current_state = STATE_NORMAL
+            send_push(LEVEL_NORMAL, "Наушники подключены", f"Текущий заряд: {battery_level}%")
+
+        if battery_level == -1:
+            if current_state is not STATE_CHARGING:
+                logging.info(f"Changing state from {current_state} to CHARGING ({STATE_CHARGING})")
+                current_state = STATE_CHARGING
+                send_push(LEVEL_NORMAL, "Наушники заряжаются", "Наушники поставлены на зарядку")
+
+            continue
+
+        if battery_level != -1 and current_state is STATE_CHARGING:
+            logging.info(f"Changing state from {current_state} to NORMAL ({STATE_NORMAL})")
+            current_state = STATE_NORMAL
+            send_push(LEVEL_NORMAL, "Наушники отключены от зарядки", f"Текущий заряд: {battery_level}%")
+
+        if battery_level <= THRESHOLD_EMPTY:
+            if current_state is not STATE_EMPTY:
+                logging.info(
+                    f"Current battery level ({battery_level}) lower than threshold empty value ({THRESHOLD_EMPTY}). Notifying")
+                current_state = STATE_EMPTY
+                send_push(LEVEL_CRITICAL, f"Наушники почти разряжены",
+                          f"Текущий заряд: {battery_level}%\n\nОни вот-вот отключатся!")
+
+            continue
+
+        if battery_level <= THRESHOLD_WARNING:
+            if current_state is not STATE_WARNING:
+                logging.info(
+                    f"Current battery level ({battery_level}) lower than threshold warning value ({THRESHOLD_WARNING}). Notifying")
+                current_state = STATE_WARNING
+                send_push(LEVEL_CRITICAL, f"Пора подключить наушники на зарядку",
+                          f"Текущий заряд: {battery_level}%\n\nСкоро наушники разрядятся")
+
+            continue
+
+
+if __name__ == "__main__":
+    main()
